@@ -42,7 +42,7 @@ function makeCatalog(json, imports = []) {
      });
      trail = trail.concat(node.targetId);
    }
-   const group = node.type === "selectionEntryGroup" || (!!src.selectionEntries && !src.type && !!src.name) || node.type === "selectionEntryGroup";
+   const group = node.type === "selectionEntryGroup" || (!src.type && (!!src.selectionEntries || !!src.selectionEntryGroups || !!src.entryLinks || !!src.defaultSelectionEntryId));
    const result = {
      id: src.id, sourceId: src.sourceId || src.id, name: src.name || "Unnamed selection", type: group ? "group" : (src.type || "group"),
      constraints: asArray(src.constraints), modifiers: asArray(src.modifiers), categoryLinks: asArray(src.categoryLinks),
@@ -88,6 +88,7 @@ function defaultPopulate(node,path,item,active = true) {
  if(!active) return;
  if(node.group){
    for(const c of node.children) {
+     if(c.name==="Crusade" || c.name==="Order of Battle" || c.name==="Weapon Modifications")continue;
      const p=keyFor(path,c), required=amount(c,"min") || 0;
      if(!c.group && required>0 && item.counts[p]===undefined) item.counts[p]=required;
      if(c.group)defaultPopulate(c,p,item,true);
@@ -98,7 +99,7 @@ function defaultPopulate(node,path,item,active = true) {
    if(remaining>0){
      const d=node.children.find(x=>x.id===node.defaultId || x.sourceId===node.defaultId)
        ||node.children.find(x=>!x.group && x.type==="model") ||node.children.find(x=>!x.group) ||node.children[0];
-     if(d) {
+     if(d && d.name!=="Crusade") {
        const p=keyFor(path,d);
        if(d.group) defaultPopulate(d,p,item,true);
        else {item.counts[p]=getCount(item,p)+remaining;defaultPopulate(d,p,item,true);}
@@ -106,6 +107,7 @@ function defaultPopulate(node,path,item,active = true) {
    }
  }else{
    for(const c of node.children){
+     if(c.name==="Crusade" || c.name==="Order of Battle" || c.name==="Weapon Modifications")continue;
      const p=keyFor(path,c);
      if(c.group)defaultPopulate(c,p,item,true);
      else {
