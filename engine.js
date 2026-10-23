@@ -173,10 +173,21 @@ function resolveCondition(cond,context){
  default:return null;
  }
 }
+function evaluateLocalGroup(g,ctx){
+ if(g.field!=="selections" || !ctx.item || !ctx.roster)return null;
+ const instance=asArray(g.conditions).find(x=>x.type==="instanceOf");
+ const before=asArray(g.conditions).some(x=>x.type==="before");
+ if(!instance || !before)return null;
+ const prior=ctx.roster.slice(0,Math.max(0,ctx.roster.findIndex(x=>x.key===ctx.item.key)));
+ const found=prior.filter(x=>x.unitId===instance.childId || (ctx.catalog?.units.get(x.unitId)?.sourceId===instance.childId)).length;
+ const value=Number(g.value)||0;
+ switch(g.type){case "atLeast":return found>=value;case "atMost":return found<=value;
+ case "greaterThan":return found>value;case "lessThan":return found<value;case "equalTo":return found===value;default:return null;}
+}
 function evaluate(mod,ctx) {
  const xs=asArray(mod.conditions), gs=asArray(mod.conditionGroups);
  if(!xs.length && !gs.length)return true;
- function group(g){const vals=[...asArray(g.conditions).map(c=>resolveCondition(c,ctx)),...asArray(g.conditionGroups).map(group)];
+ function group(g){const vals=[...asArray(g.conditions).map(c=>resolveCondition(c,ctx)),...asArray(g.conditionGroups).map(group),...asArray(g.localConditionGroups).map(c=>evaluateLocalGroup(c,ctx))];
  if(vals.some(v=>v===null))return null;
  return g.type==="or" ? vals.some(Boolean) : vals.every(Boolean);}
  const results=xs.map(c=>resolveCondition(c,ctx)).concat(gs.map(group));
