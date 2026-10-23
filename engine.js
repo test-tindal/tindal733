@@ -237,24 +237,26 @@ function validate(catalog,roster,limit,detachmentId){
   const ip=itemPoints(catalog,item,roster,detachmentId);points+=ip;details.set(item.key,ip);
   const tags=unit.categoryLinks.map(x=>x.name.toLowerCase());
   if(tags.includes("character"))characters++;
-  function descend(node,path,active=true,depth=0){
+  function descend(node,path,active=true,depth=0,insideEnhancements=false){
+   const inEnhancements=insideEnhancements||node.name==="Enhancements";
    if(!active||depth>18)return;
    if(node.group){
      const sum=groupSum(node,path,item),mn=amount(node,"min"),mx=amount(node,"max");
      if(mn!==null && sum<mn)push(unit.name+": "+node.name+" requires at least "+mn+" selection(s); has "+sum+".");
      if(mx!==null && sum>mx)push(unit.name+": "+node.name+" allows at most "+mx+" selection(s); has "+sum+".");
+     if(sum>0 && isHidden(node,ctx))push(unit.name+": "+node.name+" is unavailable in the selected detachment.");
    }else if(path!==unit.id) {
      const count=getCount(item,path),mn=amount(node,"min"),mx=amount(node,"max");
      if(mn!==null && count<mn)push(unit.name+": "+node.name+" requires at least "+mn+".");
      if(mx!==null && count>mx)push(unit.name+": "+node.name+" allows at most "+mx+".");
      if(!count)return;
      if(node.name==="Warlord")warlords+=count;
-     if(/enhancements?/i.test(path) && node.type==="upgrade" && pts(node)>0)enhancements+=count;
+     if(inEnhancements && node.type==="upgrade" && pts(node)>0)enhancements+=count;
      if(isHidden(node,ctx))push(unit.name+": "+node.name+" is unavailable in the selected detachment.");
    }
    for(const child of node.children) {
      if(child.name==="Crusade"||child.name==="Order of Battle")continue;
-     descend(child,keyFor(path,child),true,depth+1);
+     descend(child,keyFor(path,child),true,depth+1,inEnhancements);
    }
   }
   descend(unit,unit.id);
