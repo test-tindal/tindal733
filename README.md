@@ -45,19 +45,19 @@ The editor deliberately hides Crusade-only branches. Some entries with optional 
 
 ## Files
 
-- \`index.html\`: static application shell.
-- \`style.css\`: Necron-inspired desktop layout.
-- \`engine.js\`: catalogue indexing, selection trees, cost and validation logic.
-- \`app.js\`: interface, BSData fetching, persistence, list import/export.
-- \`tests/engine.test.js\`: small source-independent regression tests.
+- `index.html`: static application shell.
+- `style.css`: Necron-inspired desktop layout.
+- `engine.js`: catalogue indexing, selection trees, cost and validation logic.
+- `app.js`: interface, BSData fetching, persistence, list import/export.
+- `tests/engine.test.js`: small source-independent regression tests.
 
-The site works without a build step. Serve the directory via any static HTTP server for local development (for example \`python -m http.server 8000\`). Opening \`index.html\` directly as a file may not consistently allow cross-origin requests on all browsers.
+The site works without a build step. Serve the directory via any static HTTP server for local development (for example `python -m http.server 8000`). Opening `index.html` directly as a file may not consistently allow cross-origin requests on all browsers.
 
 Run the engine tests from the repository root with:
 
-\`\`\`bash
+```bash
 node tests/engine.test.js
-\`\`\`
+```
 
 ## Contributing
 
