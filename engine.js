@@ -67,7 +67,7 @@ function makeCatalog(json, imports = []) {
      const e=inflate(x);if(e && !roots.find(y=>y.sourceId===e.sourceId)) roots.push(e);
    });
  }
- const detachRoot = asArray(main.sharedSelectionEntries).find(x=>x.name==="Detachment") || asArray(main.selectionEntries).find(x=>x.name==="Detachment");
+ const detachRoot = files.flatMap(f=>[...asArray(f.sharedSelectionEntries),...asArray(f.selectionEntries)]).find(x=>x.name==="Detachment");
  let detachments = [];
  if(detachRoot) {
    const tree = inflate(detachRoot);
