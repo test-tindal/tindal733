@@ -33,7 +33,22 @@ async function loadFaction(name){
    const response=await fetch(SOURCE+encodeURIComponent(filename),{cache:"no-cache"});
    if(!response.ok)throw Error("Source returned HTTP "+response.status);
    const json=await response.json();
-   const newCatalog=E.makeCatalog(json);
+   // Follow BSData catalogue references (e.g. Dark Angels -> Space Marines).
+   const imports=[], pending=[...(json.catalogue?.catalogueLinks||[]).map(x=>x.name)], seen=new Set([filename]), missing=[];
+   while(pending.length && seen.size<12){
+     const importName=pending.shift();
+     const importFile=(FACTIONS.find(x=>x[0]===importName)?.[1] || importName+".json");
+     if(seen.has(importFile))continue;
+     seen.add(importFile);
+     try{
+       const r=await fetch(SOURCE+encodeURIComponent(importFile),{cache:"no-cache"});
+       if(!r.ok)throw Error("HTTP "+r.status);
+       const j=await r.json();imports.push(j);
+       for(const link of j.catalogue?.catalogueLinks||[])if(!seen.has(link.name+".json"))pending.push(link.name);
+     }catch(e){missing.push(importName)}
+   }
+   const newCatalog=E.makeCatalog(json,imports);
+   newCatalog.missingImports=missing;
    if(!newCatalog.roots.length)throw Error("No selectable units were found in this catalogue.");
    catalog=newCatalog;cachedPrices=new Map();history=[];
    state.faction=name;const old=saved[name]||{};
@@ -42,7 +57,7 @@ async function loadFaction(name){
    state.detachment=catalog.detachments.some(d=>d.id===old.detachment)?old.detachment:(catalog.detachments[0]?.id||null);
    state.selected=state.items[0]?.key||null;state.tab="configure";state.loading=false;
    $("faction").value=name;$("limit").value=state.limit;
-   $("sourceStatus").textContent=name+" • BSData revision "+String(catalog.revision??"?")+" • "+catalog.roots.length+" unit entries • "+catalog.imported+" source file";
+   $("sourceStatus").textContent=name+" • BSData revision "+String(catalog.revision??"?")+" • "+catalog.roots.length+" unit entries • "+catalog.imported+" source files"+(catalog.missingImports.length?" • missing: "+catalog.missingImports.join(", "):"");
    persist();render();
  }catch(e){
    state.loading=false;$("sourceStatus").textContent="Source unavailable: "+e.message;
