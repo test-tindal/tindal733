@@ -12,7 +12,7 @@ const FACTIONS=[
 const escapeHTML=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const stamp=()=>new Date().toISOString().slice(0,10);
 const STORAGE="dynastic-command-v2";
-let state={faction:"Necrons",detachment:null,limit:2000,items:[],selected:null,tab:"configure",search:"",category:"All",legends:false,loading:true};
+let state={faction:"Necrons",detachment:null,limit:2000,items:[],selected:null,tab:"configure",search:"",category:"All",legends:false,loading:true,expanded:{}};
 let saved={},catalog=null,lastResult=null,history=[],cachedPrices=new Map();
 function safeSaved(){try{return JSON.parse(localStorage.getItem(STORAGE)||"{}")}catch{return {}}}
 function persist(){
@@ -141,8 +141,9 @@ function renderOptionTree(node,path,item,unit,depth=0){
    if(E.isHidden(node,ctx))return "";
    const mn=E.amount(node,"min"),mx=E.amount(node,"max"),sum=E.groupSum(node,path,item);
    const range=(mn===null&&mx===null)?"":'<span class="group-limits">'+sum+' / '+(mn??0)+'-'+limitText(mx)+'</span>';
-   const expanded=depth<2?" open":"";
-   return '<details class="option-group"'+expanded+'><summary>'+escapeHTML(node.name)+range+'</summary><div class="option-level">'+children+'</div></details>';
+   const id=item.key+":"+path;
+   const expanded=(state.expanded[id]===true || (state.expanded[id]===undefined && depth<2))?" open":"";
+   return '<details class="option-group" data-group-key="'+escapeHTML(id)+'"'+expanded+'><summary>'+escapeHTML(node.name)+range+'</summary><div class="option-level">'+children+'</div></details>';
  }
  const value=E.getCount(item,path);
  const leaf=optionRow(node,path,item,unit);
@@ -249,6 +250,10 @@ function exportText(){
 function download(body,mime,filename){
  const url=URL.createObjectURL(new Blob([body],{type:mime})),a=document.createElement("a");a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
 }
+document.addEventListener("toggle",event=>{
+ const details=event.target;
+ if(details.tagName==="DETAILS" && details.dataset.groupKey)state.expanded[details.dataset.groupKey]=details.open;
+},true);
 document.addEventListener("click",event=>{
  const el=event.target.closest("[data-action]");if(!el||!catalog||state.loading)return;
  const action=el.dataset.action,key=el.dataset.key;
