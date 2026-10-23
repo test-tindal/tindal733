@@ -17,7 +17,7 @@ function makeCatalog(json, imports = []) {
  function scan(node) {
    if (!node || typeof node !== "object") return;
    if (Array.isArray(node)) {node.forEach(scan);return;}
-   if (node.id && (node.type === "unit" || node.type === "model" || node.type === "upgrade" || node.selectionEntryGroups || node.selectionEntries || node.name === "Warlord")) index.set(node.id,node);
+   if (node.id && node.name && (["unit","model","upgrade"].includes(node.type) || node.selectionEntryGroups || node.selectionEntries || node.entryLinks || node.costs || node.profiles || node.defaultSelectionEntryId || node.name === "Warlord")) index.set(node.id,node);
    if (node.id && (node.description !== undefined || node.characteristics)) ruleIndex.set(node.id,node);
    for(const k of ["selectionEntries","selectionEntryGroups","sharedSelectionEntries","sharedSelectionEntryGroups","sharedProfiles","sharedRules","sharedInfoGroups","rules","profiles","infoGroups"]) asArray(node[k]).forEach(scan);
  }
@@ -32,6 +32,7 @@ function makeCatalog(json, imports = []) {
      if (!referenced) return null;
      src = Object.assign({}, referenced, node, {
        id: node.id || referenced.id,
+       type: referenced.type || node.type,
        sourceId: referenced.sourceId || referenced.id,
        selectionEntries: asArray(referenced.selectionEntries).concat(asArray(node.selectionEntries)),
        selectionEntryGroups: asArray(referenced.selectionEntryGroups).concat(asArray(node.selectionEntryGroups)),
