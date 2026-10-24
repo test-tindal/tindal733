@@ -261,6 +261,88 @@ function pointCost(node,ctx){
  }
  return price;
 }
+/* Apply supported BSData profile modifiers from selected options, source modifiers,
+   modifier groups and explicitly attached Leaders. Unsupported predicates are skipped. */
+function resolveProfiles(catalog,item,roster,detachmentId){
+ const unit=catalog.units.get(item.unitId);
+ if(!unit)return [];
+ const detachment=catalog.detachments.find(x=>x.id===detachmentId);
+ const ctx={catalog,unit,item,roster,detachment};
+ const active=[];
+ eachActive(unit,unit.id,item,(node,path)=>{
+  active.push({node,path});
+ });
+ const modifiers=[];
+ for(const record of active){
+  for(const m of activeModifiers(record.node,ctx))
+   if(evaluate(m,ctx)===true)modifiers.push({mod:m,path:record.path,source:record.node.name,associated:false});
+ }
+ // Conditional effects from a Leader with an explicit bodyguard association.
+ for(const leader of roster){
+  if(leader.key===item.key)continue;
+  if(!Object.values(leader.associations||{}).some(v=>Array.isArray(v)?v.includes(item.key):v===item.key))continue;
+  const lu=catalog.units.get(leader.unitId);if(!lu)continue;
+  const leaderCtx={catalog,unit:lu,item:leader,roster,detachment};
+  eachActive(lu,lu.id,leader,(node,path)=>{
+   for(const m of activeModifiers(node,leaderCtx))
+    if(m.affects&&m.affects.includes("group.")&&evaluate(m,leaderCtx)===true)
+      modifiers.push({mod:m,path,source:lu.name,associated:true});
+  });
+ }
+ function apply(current,mod){
+  const type=mod.type,v=String(mod.value??"");
+  if(type==="set"||type==="replace")return v;
+  if(type==="append"){
+   if(mod.skipIfPresent && current.includes(mod.skipIfPresent))return current;
+   if(current.includes(v))return current;
+   return current ? current+(mod.join??", ")+v : v;
+  }
+  if(type==="increment"||type==="decrement"||type==="divide"||type==="multiply"){
+   const n=Number(v),m=String(current).match(/^(-?\d+(?:\.\d+)?)(.*)$/);
+   if(!m||!Number.isFinite(n))return current;
+   let x=Number(m[1]);
+   if(type==="increment")x+=n;
+   if(type==="decrement")x-=n;
+   if(type==="multiply")x*=n;
+   if(type==="divide"&&n!==0)x/=n;
+   return String(Math.round(x*1000)/1000)+m[2];
+  }
+  return current;
+ }
+ const output=[],known=new Set();
+ for(const record of active)for(const p of record.node.profiles){
+   if(!p.typeName||!asArray(p.characteristics).length)continue;
+   const key=p.id||record.path+"/"+p.name;
+   if(known.has(key))continue;known.add(key);
+   const clone={...p,characteristics:asArray(p.characteristics).map(x=>({...x})),modifiedBy:[]};
+   for(const ch of clone.characteristics) {
+    for(const source of modifiers){
+      const m=source.mod;
+      if(m.field!==ch.typeId && m.field!==ch.id)continue;
+      const targets=m.affects;
+      if(targets){
+        if(!targets.includes("profiles."+p.typeName) && !targets.includes("profiles."+p.id))continue;
+      }else if(source.path!==record.path)continue;
+      const previous=String(ch.$text??"");
+      const result=apply(previous,m);
+      if(result!==previous){
+        ch.$text=result;
+        if(!clone.modifiedBy.includes(source.source))clone.modifiedBy.push(source.source);
+      }
+    }
+    // Direct modifiers on a profile itself, when provided by the source.
+    for(const m of asArray(p.modifiers)){
+      if(m.field!==ch.typeId&&m.field!==ch.id)continue;
+      if(evaluate(m,ctx)!==true)continue;
+      const before=String(ch.$text??"");
+      ch.$text=apply(before,m);
+      if(ch.$text!==before&&!clone.modifiedBy.includes(p.name))clone.modifiedBy.push(p.name);
+    }
+   }
+   output.push(clone);
+ }
+ return output;
+}
 function itemPoints(catalog,item,roster,detachmentId){
  const unit=catalog.units.get(item.unitId);if(!unit)return 0;
  const detachment=catalog.detachments.find(x=>x.id===detachmentId);
@@ -272,7 +354,7 @@ function itemPoints(catalog,item,roster,detachmentId){
  return total;
 }
 function validate(catalog,roster,limit,detachmentId){
- const errors=[],warnings=[],totals=new Map(),details=new Map();
+ const errors=[],warnings=[],totals=new Map(),details=new Map(),globalSelections=new Map();
  const detachment=catalog.detachments.find(x=>x.id===detachmentId);
  let points=0,characters=0,warlords=0,enhancements=0;
  function push(message,type="error"){(type==="error"?errors:warnings).push(message);}
@@ -298,7 +380,13 @@ function validate(catalog,roster,limit,detachmentId){
      if(mx!==null && count>mx)push(unit.name+": "+node.name+" allows at most "+mx+".");
      if(!count)return;
      if(node.name==="Warlord")warlords+=count;
-     if(inEnhancements && node.type==="upgrade" && pts(node)>0)enhancements+=count;
+     if(inEnhancements && node.type==="upgrade")enhancements+=count;
+     for(const constraint of node.constraints){
+       if(constraint.field!=="selections" || constraint.type!=="max" || !["roster","force"].includes(constraint.scope))continue;
+       const key=node.sourceId;
+       if(!globalSelections.has(key))globalSelections.set(key,{count:0,max:Number(constraint.value),name:node.name});
+       globalSelections.get(key).count+=count;
+     }
      if(isHidden(node,ctx))push(unit.name+": "+node.name+" is unavailable in the selected detachment.");
    }
    for(const child of node.children) {
@@ -321,6 +409,7 @@ function validate(catalog,roster,limit,detachmentId){
    const unique=unit.constraints.find(x=>x.field==="selections"&&x.scope==="force"&&x.type==="max"&&Number(x.value)===1);
    if(unique&&count>1)push(unit.name+" is limited to one per army.");
  }
+ for(const entry of globalSelections.values())if(Number.isFinite(entry.max)&&entry.count>entry.max)push(entry.name+": selected "+entry.count+" times (maximum "+entry.max+" across the army).");
  if(points>Number(limit))push("Army exceeds the points limit by "+(points-Number(limit))+" pts.");
  if(roster.length>0 && !characters)push("Army has no CHARACTER. Verify that your detachment permits this.");
  if(warlords>1)push("More than one Warlord selected.");
@@ -352,5 +441,5 @@ function setCount(catalog,item,path,value) {
  if(next>0) defaultPopulate(node,path,item,true);
  return true;
 }
-root.BSDataEngine={makeCatalog,makeItem,setCount,getCount,groupSum,amount,keyFor,pts,profileRows,findNode,eachActive,itemPoints,validate,isHidden,nodeCountById,evaluate,activeModifiers,associationEntries};
+root.BSDataEngine={makeCatalog,makeItem,setCount,getCount,groupSum,amount,keyFor,pts,profileRows,findNode,eachActive,itemPoints,validate,isHidden,nodeCountById,evaluate,activeModifiers,associationEntries,resolveProfiles};
 })(typeof window!=="undefined"?window:globalThis);
