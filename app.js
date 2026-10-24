@@ -47,7 +47,13 @@ async function loadFaction(name){
        for(const link of j.catalogue?.catalogueLinks||[])if(!seen.has(link.name+".json"))pending.push(link.name);
      }catch(e){missing.push(importName)}
    }
-   const newCatalog=E.makeCatalog(json,imports);
+   let gameSystem=null;
+   try{
+     const sysResponse=await fetch(SOURCE+encodeURIComponent("Warhammer 40,000.json"),{cache:"no-cache"});
+     if(sysResponse.ok)gameSystem=await sysResponse.json();
+     else missing.push("Warhammer 40,000 game system");
+   }catch(e){missing.push("Warhammer 40,000 game system")}
+   const newCatalog=E.makeCatalog(json,imports,gameSystem);
    newCatalog.missingImports=missing;
    if(!newCatalog.roots.length)throw Error("No selectable units were found in this catalogue.");
    catalog=newCatalog;cachedPrices=new Map();history=[];
