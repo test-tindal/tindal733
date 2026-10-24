@@ -8,8 +8,9 @@ const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.r
 const amount=(node,kind,ctx)=>{const v=asArray(node.constraints).filter(c=>c.field==="selections"&&c.type===kind&&Number(c.value)>=0&&(!c.scope||["parent","self","root-entry","unit-self"].includes(c.scope))).map(c=>{let n=Number(c.value);if(ctx)for(const m of asArray(node.modifiers)){if(m.field!==c.id||evaluate(m,ctx)!==true)continue;const k=Number(m.value);if(!Number.isFinite(k))continue;if(m.type==="set")n=k;else if(["increment","add"].includes(m.type))n+=k;else if(["decrement","subtract"].includes(m.type))n-=k}return Math.max(0,n)});return v.length?(kind==="min"?Math.max(...v):Math.min(...v)):null};
 const pts = node => asArray(node.costs).filter(x => x.name === "pts" || x.typeId === PTS).reduce((t, x) => t + (Number(x.value) || 0), 0);
 const profileRows = p => asArray(p.characteristics).map(c => ({name:c.name, value:String(c.$text ?? "")}));
-function makeCatalog(json, imports = []) {
- const main = json.catalogue || json, files = [main].concat(imports.map(x=>x.catalogue || x));
+function makeCatalog(json, imports = [], gameSystem = null) {
+ const main = json.catalogue || json, system = gameSystem && (gameSystem.gameSystem || gameSystem);
+ const files = [main].concat(imports.map(x=>x.catalogue || x)).concat(system?[system]:[]);
  const index = new Map(), ruleIndex = new Map();
  function scan(node) {
    if (!node || typeof node !== "object") return;
@@ -79,8 +80,12 @@ function makeCatalog(json, imports = []) {
  }
  detachments = [...new Map(detachments.map(x=>[x.id,x])).values()];
  roots.sort((a,b)=>a.name.localeCompare(b.name));
- return {name:main.name, revision:main.revision, roots, units:new Map(roots.map(x=>[x.sourceId,x])), detachments,
-   rules:ruleIndex, imported:files.length};
+ const armyForce=asArray(system?.forceEntries).find(x=>x.name==="Army Roster");
+ const enhancementCost=asArray(system?.costTypes).find(x=>x.name==="Enhancements");
+ const enhancementLimit=asArray(armyForce?.constraints).find(x=>x.field===enhancementCost?.id && x.type==="max");
+ return {name:main.name, revision:main.revision, roots, units:new Map(roots.map(x=>[x.sourceId,x])),detachments,
+   rules:ruleIndex, imported:files.length,gameSystem:system?.name||null,
+   enhancementLimit:enhancementLimit?Number(enhancementLimit.value):null,armyForce};
 }
 function keyFor(parent, child) {return parent ? parent+"/"+child.id : child.id;}
 function getCount(item, path) {return Math.max(0, Number(item.counts && item.counts[path]) || 0);}
@@ -415,7 +420,8 @@ function validate(catalog,roster,limit,detachmentId){
  if(warlords>1)push("More than one Warlord selected.");
  if(roster.length>0 && !warlords)push("No Warlord marked. Select one in a character's options.","warning");
  if(roster.length>0 && !detachment)push("No detachment selected.","warning");
- if(enhancements>3)push("More than three enhancements selected.");
+ const enhancementCap=catalog.enhancementLimit??3;
+ if(enhancements>enhancementCap)push("More than "+enhancementCap+" enhancements selected (army-wide limit).");
  return {errors:[...new Set(errors)],warnings:[...new Set(warnings)],points,details,characters,warlords,enhancements};
 }
 function findNode(unit,path){
