@@ -279,7 +279,14 @@ function loadLegacy(parsed){
  if(parsed.version===2){
    const faction=parsed.faction||"Necrons";
    if(faction!==state.faction)throw Error("This file is for "+faction+". Choose that faction first.");
-   return parsed.items.filter(x=>x&&catalog.units.has(x.unitId)&&x.counts&&typeof x.counts==="object").map(x=>({...x,key:crypto.randomUUID?crypto.randomUUID():String(Math.random())}));
+   const clean=parsed.items.filter(x=>x&&catalog.units.has(x.unitId)&&x.counts&&typeof x.counts==="object");
+   const remap=new Map(clean.map(x=>[x.key,crypto.randomUUID?crypto.randomUUID():String(Math.random())]));
+   return clean.map(x=>({
+     ...x,key:remap.get(x.key),
+     associations:Object.fromEntries(Object.entries(x.associations||{}).map(([id,target])=>
+       [id,Array.isArray(target)?target.map(key=>remap.get(key)).filter(Boolean):(remap.get(target)||"")]
+     ).filter(([,target])=>Array.isArray(target)?target.length:Boolean(target)))
+   }));
  }
  throw Error("Unsupported army file format.");
 }
