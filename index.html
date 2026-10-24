@@ -5,7 +5,7 @@
 <meta name="theme-color" content="#05130c">
 <meta name="description" content="Warhammer 40,000 11th Edition army builder powered by BSData community files.">
 <title>Dynastic Command | 40K Army Builder</title>
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 <header>
@@ -59,8 +59,12 @@
     <div id="inspectorBody"><div class="empty">Select a unit to configure.</div></div>
   </section>
 </main>
+<dialog id="infoDialog" class="info-dialog" aria-labelledby="infoTitle">
+  <div class="info-header"><h3 id="infoTitle">Enhancement</h3><button id="closeInfo" type="button" class="tiny" aria-label="Close effect popup">✕</button></div>
+  <div id="infoContent" class="info-content"></div>
+</dialog>
 <div id="toast" role="status" aria-live="polite"></div>
-<script defer src="engine.js?v=2"></script>
-<script defer src="app.js?v=2"></script>
+<script defer src="engine.js?v=3"></script>
+<script defer src="app.js?v=3"></script>
 </body>
 </html>
