@@ -5,10 +5,7 @@ const PTS = "51b2-306e-1021-d207";
 const asArray = v => Array.isArray(v) ? v : [];
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
-const amount = (node, kind) => {
-  const values = asArray(node.constraints).filter(c => c.field === "selections" && c.type === kind && Number(c.value) >= 0 && (!c.scope || ["parent", "self", "root-entry", "unit-self"].includes(c.scope))).map(c => Number(c.value));
-  return values.length ? (kind === "min" ? Math.max(...values) : Math.min(...values)) : null;
-};
+const amount=(node,kind,ctx)=>{const v=asArray(node.constraints).filter(c=>c.field==="selections"&&c.type===kind&&Number(c.value)>=0&&(!c.scope||["parent","self","root-entry","unit-self"].includes(c.scope))).map(c=>{let n=Number(c.value);if(ctx)for(const m of asArray(node.modifiers)){if(m.field!==c.id||evaluate(m,ctx)!==true)continue;const k=Number(m.value);if(!Number.isFinite(k))continue;if(m.type==="set")n=k;else if(["increment","add"].includes(m.type))n+=k;else if(["decrement","subtract"].includes(m.type))n-=k}return Math.max(0,n)});return v.length?(kind==="min"?Math.max(...v):Math.min(...v)):null};
 const pts = node => asArray(node.costs).filter(x => x.name === "pts" || x.typeId === PTS).reduce((t, x) => t + (Number(x.value) || 0), 0);
 const profileRows = p => asArray(p.characteristics).map(c => ({name:c.name, value:String(c.$text ?? "")}));
 function makeCatalog(json, imports = []) {
@@ -38,6 +35,9 @@ function makeCatalog(json, imports = []) {
        selectionEntryGroups: asArray(referenced.selectionEntryGroups).concat(asArray(node.selectionEntryGroups)),
        entryLinks: asArray(referenced.entryLinks).concat(asArray(node.entryLinks)),
        profiles: asArray(referenced.profiles).concat(asArray(node.profiles)),
+ modifierGroups:asArray(referenced.modifierGroups).concat(asArray(node.modifierGroups)),
+ associations:asArray(referenced.associations).concat(asArray(node.associations)),
+ infoLinks:asArray(referenced.infoLinks).concat(asArray(node.infoLinks)),
        modifiers: asArray(referenced.modifiers).concat(asArray(node.modifiers)),
        constraints: asArray(referenced.constraints).concat(asArray(node.constraints))
      });
@@ -46,7 +46,7 @@ function makeCatalog(json, imports = []) {
    const group = node.type === "selectionEntryGroup" || (!src.type && (!!src.selectionEntries || !!src.selectionEntryGroups || !!src.entryLinks || !!src.defaultSelectionEntryId));
    const result = {
      id: src.id, sourceId: src.sourceId || src.id, name: src.name || "Unnamed selection", type: group ? "group" : (src.type || "group"),
-     constraints: asArray(src.constraints), modifiers: asArray(src.modifiers), categoryLinks: asArray(src.categoryLinks),
+     constraints: asArray(src.constraints), modifiers: asArray(src.modifiers), modifierGroups:asArray(src.modifierGroups), associations:asArray(src.associations), categoryLinks: asArray(src.categoryLinks),
      costs: asArray(src.costs), profiles: asArray(src.profiles), infoLinks: asArray(src.infoLinks), rules: asArray(src.rules),
      hidden: Boolean(src.hidden), defaultId: src.defaultSelectionEntryId,
      children: [], group: group
@@ -124,6 +124,37 @@ function makeItem(unit) {
  defaultPopulate(unit,unit.id,item);
  return item;
 }
+function associationTargetItems(catalog,roster,item,association){
+ if(!catalog.units.get(item.unitId))return [];
+ function group(g,u){
+  const vals=asArray(g.conditions).map(c=>{
+   if(c.field!=="selections"||c.type!=="instanceOf")return null;
+   const match=c.childId==="any"||c.childId===u.id||c.childId===u.sourceId;
+   return Number(c.value)===1?match:!match;
+  }).concat(asArray(g.conditionGroups).map(x=>group(x,u)));
+  if(!vals.length)return true;
+  return g.type==="or"?vals.some(x=>x===true):vals.every(x=>x===true);
+ }
+ return roster.filter(target=>{
+  if(target.key===item.key)return false;
+  const u=catalog.units.get(target.unitId);
+  return u&&asArray(association.conditionGroups).every(g=>group(g,u));
+ });
+}
+function associationEntries(catalog,roster,item){
+ const u=catalog.units.get(item.unitId);if(!u)return [];
+ return asArray(u.associations).filter(a=>a.action==="group").map(a=>({
+  association:a,candidates:associationTargetItems(catalog,roster,item,a),value:item.associations?.[a.id]||""
+ }));
+}
+function attachedItems(ctx){
+ const out=new Map(),roster=ctx.roster||[];
+ if(!ctx.item||!ctx.catalog)return [];
+ const add=key=>{const i=roster.find(x=>x.key===key);if(i&&i.key!==ctx.item.key)out.set(i.key,i)};
+ for(const v of Object.values(ctx.item.associations||{}))Array.isArray(v)?v.forEach(add):add(v);
+ for(const it of roster)for(const v of Object.values(it.associations||{}))if(Array.isArray(v)?v.includes(ctx.item.key):v===ctx.item.key)add(it.key);
+ return [...out.values()];
+}
 function countNode(node,path,item) {
  if(node.group)return groupSum(node,path,item);
  return getCount(item,path);
@@ -143,34 +174,40 @@ function nodeCountById(unit,item,childId) {
  });
  return total;
 }
-function resolveCondition(cond,context){
+function resolveCondition(cond,ctx){
  if(!cond)return false;
- const field=cond.field || "selections", kind=cond.type;
- const id=cond.childId, scope=cond.scope || "";
+ const field=cond.field||"selections",kind=cond.type,id=cond.childId,scope=cond.scope||"";
  let val=0;
- if(field==="selections" || field==="forces"){
-   if(id===context.detachment?.id || id===context.detachment?.sourceId)val=1;
-   else if(field==="forces" && id) val=0;
-   else if(context.unit && context.item && ["self","parent","unit-self","root-entry",context.unit.sourceId,context.unit.id].includes(scope))val=nodeCountById(context.unit,context.item,id);
-   else if(id==="model" && context.unit && context.item)val=nodeCountById(context.unit,context.item,"model");
-   else if(context.roster && context.catalog) {
-     for(const it of context.roster) {
-       const u=context.catalog.units.get(it.unitId);
-       if(u && (u.sourceId===id||u.id===id))val++;
-       if(u && id && u!==context.unit)val+=nodeCountById(u,it,id);
-     }
-   }
-   if(!id && scope==="roster")val=context.roster?.length||0;
- }else if(field==="points")val=context.points||0;
- else if(field==="associations")val=0;
+ if(field==="selections"||field==="forces"){
+  if(id===ctx.detachment?.id||id===ctx.detachment?.sourceId)val=1;
+  else if(field==="forces")val=0;
+  else if(ctx.unit&&ctx.item){
+   const self=[ctx.unit.id,ctx.unit.sourceId].includes(id);
+   if(self&&(kind==="instanceOf"||scope==="self"||scope==="root-entry"))val=1;
+   else if(["self","parent","unit-self","root-entry","ancestor","model-or-unit",ctx.unit.id,ctx.unit.sourceId,"model","upgrade"].includes(scope))val=nodeCountById(ctx.unit,ctx.item,id);
+   else if(scope==="force"||scope==="roster"){
+    for(const it of ctx.roster||[]){
+     const u=ctx.catalog?.units.get(it.unitId);if(!u)continue;
+     if(u.id===id||u.sourceId===id)val++;
+     if(id)val+=nodeCountById(u,it,id);
+    }
+   }else val=nodeCountById(ctx.unit,ctx.item,id);
+  }
+  if(!id&&scope==="roster")val=ctx.roster?.length||0;
+ }else if(field==="associations"){
+  val=attachedItems(ctx).filter(it=>{
+   if(!id||id==="any")return true;
+   const u=ctx.catalog.units.get(it.unitId);return u&&(u.id===id||u.sourceId===id);
+  }).length;
+ }else if(field==="points")val=ctx.points||0;
  else return null;
- const n=Number(cond.value);
+ const n=Number(cond.value);if(!Number.isFinite(n))return null;
  switch(kind){
- case "atLeast":return val>=n; case "atMost":return val<=n;
- case "greaterThan":return val>n; case "lessThan":return val<n;
- case "equalTo":return val===n; case "notEqualTo":return val!==n;
- case "instanceOf":return val>=n; case "notInstanceOf":return val<n;
- default:return null;
+  case "atLeast":return val>=n;case "atMost":return val<=n;
+  case "greaterThan":return val>n;case "lessThan":return val<n;
+  case "equalTo":return val===n;case "notEqualTo":return val!==n;
+  case "instanceOf":return val>=n;case "notInstanceOf":return val<n;
+  default:return null;
  }
 }
 function evaluateLocalGroup(g,ctx){
@@ -184,26 +221,36 @@ function evaluateLocalGroup(g,ctx){
  switch(g.type){case "atLeast":return found>=value;case "atMost":return found<=value;
  case "greaterThan":return found>value;case "lessThan":return found<value;case "equalTo":return found===value;default:return null;}
 }
-function evaluate(mod,ctx) {
- const xs=asArray(mod.conditions), gs=asArray(mod.conditionGroups);
- if(!xs.length && !gs.length)return true;
- function group(g){const vals=[...asArray(g.conditions).map(c=>resolveCondition(c,ctx)),...asArray(g.conditionGroups).map(group),...asArray(g.localConditionGroups).map(c=>evaluateLocalGroup(c,ctx))];
- if(vals.some(v=>v===null))return null;
- return g.type==="or" ? vals.some(Boolean) : vals.every(Boolean);}
- const results=xs.map(c=>resolveCondition(c,ctx)).concat(gs.map(group));
- if(results.includes(null))return null;
- return results.every(Boolean);
+function evaluate(mod,ctx){
+ function combine(v,mode){
+  if(mode==="or"){if(v.includes(true))return true;return v.includes(null)?null:false}
+  if(v.includes(false))return false;return v.includes(null)?null:true;
+ }
+ function group(g){
+  const v=asArray(g.conditions).map(c=>resolveCondition(c,ctx)).concat(asArray(g.conditionGroups).map(group),asArray(g.localConditionGroups).map(x=>evaluateLocalGroup(x,ctx)));
+  return combine(v,g.type);
+ }
+ const v=asArray(mod.conditions).map(c=>resolveCondition(c,ctx)).concat(asArray(mod.conditionGroups).map(group),asArray(mod.localConditionGroups).map(x=>evaluateLocalGroup(x,ctx)));
+ return combine(v,mod.type==="or"?"or":"and");
+}
+function activeModifiers(node,ctx){
+ const out=[...asArray(node.modifiers)];
+ function walk(g){
+  if(evaluate({conditions:g.conditions,conditionGroups:g.conditionGroups,localConditionGroups:g.localConditionGroups},ctx)!==true)return;
+  out.push(...asArray(g.modifiers));asArray(g.modifierGroups).forEach(walk);
+ }
+ asArray(node.modifierGroups).forEach(walk);return out;
 }
 function isHidden(node,ctx){
  let hidden=node.hidden;
- for(const m of node.modifiers)if(m.field==="hidden" && m.type==="set"){
+ for(const m of activeModifiers(node,ctx))if(m.field==="hidden" && m.type==="set"){
    const result=evaluate(m,ctx);if(result===true) hidden=m.value===true || m.value==="true";
  }
  return hidden;
 }
 function pointCost(node,ctx){
  let price=pts(node);
- for(const mod of node.modifiers){
+ for(const mod of activeModifiers(node,ctx)){
    if(mod.field!==PTS && mod.field!=="pts")continue;
    if(evaluate(mod,ctx)!==true)continue;
    const n=Number(mod.value);
@@ -299,5 +346,5 @@ function setCount(catalog,item,path,value) {
  if(next>0) defaultPopulate(node,path,item,true);
  return true;
 }
-root.BSDataEngine={makeCatalog,makeItem,setCount,getCount,groupSum,amount,keyFor,pts,profileRows,findNode,eachActive,itemPoints,validate,isHidden,nodeCountById,evaluate};
+root.BSDataEngine={makeCatalog,makeItem,setCount,getCount,groupSum,amount,keyFor,pts,profileRows,findNode,eachActive,itemPoints,validate,isHidden,nodeCountById,evaluate,activeModifiers,associationEntries};
 })(typeof window!=="undefined"?window:globalThis);
