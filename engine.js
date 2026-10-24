@@ -129,7 +129,7 @@ function associationTargetItems(catalog,roster,item,association){
  function group(g,u){
   const vals=asArray(g.conditions).map(c=>{
    if(c.field!=="selections"||c.type!=="instanceOf")return null;
-   const match=c.childId==="any"||c.childId===u.id||c.childId===u.sourceId;
+   const match=c.childId==="any"||c.childId===u.id||c.childId===u.sourceId||Boolean(c.childName&&c.childName===u.name);
    return Number(c.value)===1?match:!match;
   }).concat(asArray(g.conditionGroups).map(x=>group(x,u)));
   if(!vals.length)return true;
@@ -197,7 +197,7 @@ function resolveCondition(cond,ctx){
  }else if(field==="associations"){
   val=attachedItems(ctx).filter(it=>{
    if(!id||id==="any")return true;
-   const u=ctx.catalog.units.get(it.unitId);return u&&(u.id===id||u.sourceId===id);
+   const u=ctx.catalog.units.get(it.unitId);return u&&(u.id===id||u.sourceId===id||Boolean(cond.childName&&cond.childName===u.name));
   }).length;
  }else if(field==="points")val=ctx.points||0;
  else return null;
@@ -288,12 +288,12 @@ function validate(catalog,roster,limit,detachmentId){
    const inEnhancements=insideEnhancements||node.name==="Enhancements";
    if(!active||depth>18)return;
    if(node.group){
-     const sum=groupSum(node,path,item),mn=amount(node,"min"),mx=amount(node,"max");
+     const sum=groupSum(node,path,item),mn=amount(node,"min",ctx),mx=amount(node,"max",ctx);
      if(mn!==null && sum<mn)push(unit.name+": "+node.name+" requires at least "+mn+" selection(s); has "+sum+".");
      if(mx!==null && sum>mx)push(unit.name+": "+node.name+" allows at most "+mx+" selection(s); has "+sum+".");
      if(sum>0 && isHidden(node,ctx))push(unit.name+": "+node.name+" is unavailable in the selected detachment.");
    }else if(path!==unit.id) {
-     const count=getCount(item,path),mn=amount(node,"min"),mx=amount(node,"max");
+     const count=getCount(item,path),mn=amount(node,"min",ctx),mx=amount(node,"max",ctx);
      if(mn!==null && count<mn)push(unit.name+": "+node.name+" requires at least "+mn+".");
      if(mx!==null && count>mx)push(unit.name+": "+node.name+" allows at most "+mx+".");
      if(!count)return;
@@ -306,8 +306,13 @@ function validate(catalog,roster,limit,detachmentId){
      descend(child,keyFor(path,child),true,depth+1,inEnhancements);
    }
   }
+  for(const entry of associationEntries(catalog,roster,item)){
+   const a=entry.association,v=entry.value;
+   if(v && !entry.candidates.some(x=>x.key===v))push(unit.name+": "+a.name+" references a missing or incompatible unit.");
+   if((Number(a.min)||0)>0 && !v)push(unit.name+": "+a.name+" requires an associated unit.");
+  }
   descend(unit,unit.id);
-  for(const mod of unit.modifiers)if(mod.field==="error" && evaluate(mod,ctx)===true)push(unit.name+": "+String(mod.value));
+  for(const mod of activeModifiers(unit,ctx))if(mod.field==="error"&&evaluate(mod,ctx)===true)push(unit.name+": "+String(mod.value));
  }
  for(const [id,count] of totals){
    const unit=catalog.units.get(id),cats=unit.categoryLinks.map(x=>x.name.toLowerCase());
@@ -336,7 +341,8 @@ function setCount(catalog,item,path,value) {
  const unit=catalog.units.get(item.unitId),node=findNode(unit,path);
  if(!node || node.group)return false;
  const parentPath=path.slice(0,path.lastIndexOf("/")),parent=findNode(unit,parentPath);
- const mx=amount(node,"max"),gm=parent&&parent.group?amount(parent,"max"):null;
+ const ctx={catalog,unit,item,roster:[item],detachment:null};
+ const mx=amount(node,"max",ctx),gm=parent&&parent.group?amount(parent,"max",ctx):null;
  const max=Math.min(mx??99,gm??99,99);
  const next=clamp(Math.round(Number(value)||0),0,max);
  item.counts[path]=next;
