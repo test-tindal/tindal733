@@ -187,28 +187,19 @@ function renderOptionTree(node,path,item,unit,depth=0,insideEnhancements=false){
  return '<div>'+leaf+'<div class="option-level">'+inner+'</div></div>';
 }
 function gatherProfiles(unit,item){
- const profiles=new Map();
- E.eachActive(unit,unit.id,item,(n,path,count)=>{
-   for(const p of n.profiles){
-     if(!p.typeName || !["Unit","Ranged Weapons","Melee Weapons","Abilities","C'tan Powers","Invulnerable Save"].includes(p.typeName))continue;
-     const id=p.id||p.name;
-     if(profiles.has(id))continue;
-     profiles.set(id,{...p,occurrences:count});
-   }
- });
- return [...profiles.values()];
+ return E.resolveProfiles(catalog,item,state.items,state.detachment).filter(p=>["Unit","Ranged Weapons","Melee Weapons","Abilities","C'tan Powers","Invulnerable Save"].includes(p.typeName));
 }
 function renderDatasheet(unit,item){
  const profiles=gatherProfiles(unit,item);
  const top=profiles.filter(x=>x.typeName==="Unit"),weapons=profiles.filter(x=>/Weapons|Powers/.test(x.typeName)),abilities=profiles.filter(x=>x.typeName==="Abilities"||x.typeName==="Invulnerable Save");
- let html='<p class="small-note">Source datasheet profiles. Some conditional BSData stat modifiers are not yet applied.</p>';
+ let html='<p class="small-note">Source datasheet profiles with supported conditional modifiers applied. Effects requiring unimplemented conditions may be absent.</p>';
  if(top.length){
   const p=top[0],rows=E.profileRows(p);
   html+='<div class="record"><h3>'+escapeHTML(p.name)+' - Unit characteristics</h3><table class="profile-grid"><tr>'+rows.map(r=>'<th>'+escapeHTML(r.name)+'</th>').join("")+'</tr><tr>'+rows.map(r=>'<td>'+escapeHTML(r.value)+'</td>').join("")+'</tr></table></div>';
  }
  for(const p of weapons){
   html+='<div class="record"><h3>'+escapeHTML(p.name)+' <span class="minor muted">('+escapeHTML(p.typeName)+')</span></h3>'+
-  '<table class="profile-grid">'+E.profileRows(p).map(r=>'<tr><th>'+escapeHTML(r.name)+'</th><td>'+escapeHTML(r.value)+'</td></tr>').join("")+'</table></div>';
+  (p.modifiedBy?.length?'<p class="small-note">Modified by: '+escapeHTML(p.modifiedBy.join(', '))+'</p>':'')+'<table class="profile-grid">'+E.profileRows(p).map(r=>'<tr><th>'+escapeHTML(r.name)+'</th><td>'+escapeHTML(r.value)+'</td></tr>').join("")+'</table></div>';
  }
  for(const p of abilities){
   html+='<div class="record"><h3>'+escapeHTML(p.name)+'</h3><div class="record-body">'+E.profileRows(p).map(r=>r.name==="Description"?escapeHTML(r.value):'<b>'+escapeHTML(r.name)+':</b> '+escapeHTML(r.value)).join(" ")+'</div></div>';
@@ -231,6 +222,21 @@ function renderRules(unit,item){
  for(const rule of map.values())html+='<div class="record"><h3>'+escapeHTML(rule.name)+'</h3><div class="record-body">'+escapeHTML(rule.description||"Rule reference without a local description.")+'</div></div>';
  return html+(map.size?"":'<div class="empty">No linked rules found.</div>');
 }
+function renderAssociations(unit,item){
+ const entries=E.associationEntries(catalog,state.items,item);
+ if(!entries.length)return "";
+ let html='<div class="association-block"><h4>Leader / unit associations</h4><p class="small-note">Attach a Leader or another supported unit to a compatible unit in the roster. Source restrictions apply where supported.</p>';
+ for(const entry of entries) {
+   const a=entry.association;
+   html+='<div class="association-row"><label for="assoc-'+escapeHTML(a.id)+'">'+escapeHTML(a.label||a.name)+'</label><select id="assoc-'+escapeHTML(a.id)+'" data-field="association" data-association-id="'+escapeHTML(a.id)+'"><option value="">Unassigned</option>'+
+    entry.candidates.map(target=>{
+      const candidate=catalog.units.get(target.unitId);
+      return '<option value="'+escapeHTML(target.key)+'" '+(entry.value===target.key?"selected":"")+'>'+escapeHTML(candidate.name)+'</option>';
+    }).join("")+'</select></div>';
+   if(entry.value&&!entry.candidates.some(x=>x.key===entry.value))html+='<div class="minor" style="color:var(--red)">The previous associated unit is unavailable or incompatible.</div>';
+ }
+ return html+'</div>';
+}
 function renderInspector(){
  const item=currentItem(),box=$("inspectorBody");
  if(!catalog||!item){$("inspectorTitle").textContent="No unit selected";$("inspectorMeta").textContent="";$("inspectorTabs").classList.add("hidden");box.innerHTML='<div class="empty">Select a unit in the legion manifest to configure equipment, inspect profiles and view rules.</div>';return;}
@@ -242,8 +248,9 @@ function renderInspector(){
  if(state.tab==="datasheet"){box.innerHTML=renderDatasheet(unit,item);return;}
  if(state.tab==="rules"){box.innerHTML=renderRules(unit,item);return;}
  const optionHtml=unit.children.map(child=>renderOptionTree(child,E.keyFor(unit.id,child),item,unit)).join("");
+ const associationHtml=renderAssociations(unit,item);
  box.innerHTML='<div class="small-note">Set model quantities and select equipment. Changes update the roster points immediately.</div>'+
- (optionHtml||'<div class="empty">This entry has no configurable options.</div>')+
+ (associationHtml+optionHtml||'<div class="empty">This entry has no configurable options.</div>')+
  '<p class="small-note">Red warnings in the legion manifest indicate constraints that still need attention.</p>';
 }
 function render(){
@@ -277,6 +284,10 @@ function exportText(){
  const d=catalog.detachments.find(x=>x.id===state.detachment);
  const lines=[state.faction+" - "+(d?.name||"No detachment"),r.points+" / "+state.limit+" pts",""];
  state.items.forEach(it=>{const u=catalog.units.get(it.unitId);if(!u)return;lines.push(u.name+" - "+r.details.get(it.key)+" pts ("+modelSummary(u,it)+")");
+  for(const [associationId,targetKey] of Object.entries(it.associations||{})){
+   const target=state.items.find(x=>x.key===targetKey),targetUnit=target&&catalog.units.get(target.unitId);
+   if(targetUnit)lines.push("  Attached to: "+targetUnit.name);
+  }
   E.eachActive(u,u.id,it,(n,p,count)=>{if(n!==u&&!n.group&&n.type!=="model"&&n.name!=="Battle Tallies"&&n.name!=="Warlord")lines.push("  "+count+"x "+n.name);if(n.name==="Warlord")lines.push("  WARLORD")});
  });
  lines.push("","Validation:",...r.errors.map(x=>"ERROR: "+x),...r.warnings.map(x=>"NOTE: "+x));
@@ -312,6 +323,8 @@ document.addEventListener("change",event=>{
  const el=event.target;
  if(el.dataset.field==="qty"){
    mutate(()=>{const it=currentItem();if(it)E.setCount(catalog,it,el.dataset.path,el.value)});
+ }else if(el.dataset.field==="association"){
+   mutate(()=>{const it=currentItem();if(!it)return;it.associations=it.associations||{};if(el.value)it.associations[el.dataset.associationId]=el.value;else delete it.associations[el.dataset.associationId]});
  }else if(el.dataset.field==="warlord"){
    const enabled=el.checked;
    mutate(()=>{
