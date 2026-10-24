@@ -432,11 +432,11 @@ function findNode(unit,path){
  for(const id of parts.slice(1)){node=node.children.find(c=>c.id===id);if(!node)return null;}
  return node;
 }
-function setCount(catalog,item,path,value) {
+function setCount(catalog,item,path,value,roster=[item],detachmentId=null) {
  const unit=catalog.units.get(item.unitId),node=findNode(unit,path);
  if(!node || node.group)return false;
  const parentPath=path.slice(0,path.lastIndexOf("/")),parent=findNode(unit,parentPath);
- const ctx={catalog,unit,item,roster:[item],detachment:null};
+ const ctx={catalog,unit,item,roster,detachment:catalog.detachments.find(x=>x.id===detachmentId)};
  const mx=amount(node,"max",ctx),gm=parent&&parent.group?amount(parent,"max",ctx):null;
  const max=Math.min(mx??99,gm??99,99);
  const next=clamp(Math.round(Number(value)||0),0,max);
