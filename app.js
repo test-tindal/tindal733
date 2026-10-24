@@ -84,12 +84,14 @@ function unitCategory(unit){
  if(cats.includes("Character"))return "Character";
  if(cats.includes("Battleline"))return "Battleline";
  if(cats.includes("Aircraft"))return "Aircraft";
+ if(cats.includes("Dedicated Transport"))return "Dedicated Transport";
+ if(cats.includes("Fortification"))return "Fortification";
  if(cats.includes("Vehicle"))return "Vehicle";
  if(cats.includes("Monster"))return "Monster";
  if(cats.includes("Mounted"))return "Mounted";
  if(cats.includes("Infantry"))return "Infantry";
  if(cats.includes("Aircraft"))return "Aircraft";
- return cats.find(c=>!c.startsWith("Faction:"))||"Other";
+ return "Other";
 }
 function unitBasePrice(unit){
  if(cachedPrices.has(unit.sourceId))return cachedPrices.get(unit.sourceId);
@@ -104,7 +106,7 @@ function renderCatalog(){
    if(state.category!=="All"&&unitCategory(x)!==state.category)return false;
    return !q||x.name.toLowerCase().includes(q)||x.categoryLinks.some(c=>c.name.toLowerCase().includes(q));
  });
- const order=["Character","Battleline","Infantry","Mounted","Vehicle","Monster","Aircraft","Other"];
+ const order=["Character","Battleline","Infantry","Mounted","Dedicated Transport","Vehicle","Monster","Aircraft","Fortification","Other"];
  const groups=new Map();
  for(const unit of entries){
    const category=unitCategory(unit);
@@ -179,7 +181,7 @@ function renderOptionTree(node,path,item,unit,depth=0,insideEnhancements=false){
  if(node.group){
    const children=node.children.map(child=>renderOptionTree(child,E.keyFor(path,child),item,unit,depth+1,enhancements)).join("");
    if(!children)return "";
-   if(E.isHidden(node,ctx))return "";
+   if(E.isHidden(node,ctx) && E.groupSum(node,path,item)===0)return "";
    const mn=E.amount(node,"min",ctx),mx=E.amount(node,"max",ctx),sum=E.groupSum(node,path,item);
    const range=(mn===null&&mx===null)?"":'<span class="group-limits">'+sum+' / '+(mn??0)+'-'+limitText(mx)+'</span>';
    const id=item.key+":"+path;
@@ -322,13 +324,13 @@ document.addEventListener("click",event=>{
  }else if(action==="remove"){
    mutate(()=>{state.items=state.items.filter(x=>x.key!==key);if(state.selected===key)state.selected=state.items[0]?.key||null});
  }else if(action==="up"||action==="down"){
-   mutate(()=>{const it=currentItem();if(!it)return;const path=el.dataset.path;E.setCount(catalog,it,path,E.getCount(it,path)+(action==="up"?1:-1))});
+   mutate(()=>{const it=currentItem();if(!it)return;const path=el.dataset.path;E.setCount(catalog,it,path,E.getCount(it,path)+(action==="up"?1:-1),state.items,state.detachment)});
  }
 });
 document.addEventListener("change",event=>{
  const el=event.target;
  if(el.dataset.field==="qty"){
-   mutate(()=>{const it=currentItem();if(it)E.setCount(catalog,it,el.dataset.path,el.value)});
+   mutate(()=>{const it=currentItem();if(it)E.setCount(catalog,it,el.dataset.path,el.value,state.items,state.detachment)});
  }else if(el.dataset.field==="association"){
    mutate(()=>{const it=currentItem();if(!it)return;it.associations=it.associations||{};if(el.value)it.associations[el.dataset.associationId]=el.value;else delete it.associations[el.dataset.associationId]});
  }else if(el.dataset.field==="warlord"){
@@ -337,9 +339,9 @@ document.addEventListener("change",event=>{
      const selected=currentItem();if(!selected)return;
      if(enabled)for(const item of state.items){
        const u=catalog.units.get(item.unitId),w=u?.children.find(x=>x.name==="Warlord");
-       if(w)E.setCount(catalog,item,E.keyFor(u.id,w),0);
+       if(w)E.setCount(catalog,item,E.keyFor(u.id,w),0,state.items,state.detachment);
      }
-     E.setCount(catalog,selected,el.dataset.path,enabled?1:0);
+     E.setCount(catalog,selected,el.dataset.path,enabled?1:0,state.items,state.detachment);
    });
  }
 });
