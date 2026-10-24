@@ -12,7 +12,7 @@ const FACTIONS=[
 const escapeHTML=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const stamp=()=>new Date().toISOString().slice(0,10);
 const STORAGE="dynastic-command-v2";
-let state={faction:"Necrons",detachment:null,limit:2000,items:[],selected:null,tab:"configure",search:"",category:"All",legends:false,loading:true,expanded:{}};
+let state={faction:"Necrons",detachment:null,limit:2000,items:[],selected:null,tab:"configure",search:"",category:"All",legends:false,loading:true,expanded:{},catalogCollapsed:{}};
 let saved={},catalog=null,lastResult=null,history=[],cachedPrices=new Map();
 function safeSaved(){try{return JSON.parse(localStorage.getItem(STORAGE)||"{}")}catch{return {}}}
 function persist(){
@@ -77,6 +77,7 @@ function unitCategory(unit){
  const cats=unit.categoryLinks.map(x=>x.name);
  if(cats.includes("Character"))return "Character";
  if(cats.includes("Battleline"))return "Battleline";
+ if(cats.includes("Aircraft"))return "Aircraft";
  if(cats.includes("Vehicle"))return "Vehicle";
  if(cats.includes("Monster"))return "Monster";
  if(cats.includes("Mounted"))return "Mounted";
@@ -97,8 +98,20 @@ function renderCatalog(){
    if(state.category!=="All"&&unitCategory(x)!==state.category)return false;
    return !q||x.name.toLowerCase().includes(q)||x.categoryLinks.some(c=>c.name.toLowerCase().includes(q));
  });
+ const order=["Character","Battleline","Infantry","Mounted","Vehicle","Monster","Aircraft","Other"];
+ const groups=new Map();
+ for(const unit of entries){
+   const category=unitCategory(unit);
+   if(!groups.has(category))groups.set(category,[]);
+   groups.get(category).push(unit);
+ }
  $("catalogInfo").textContent=entries.length+" / "+catalog.roots.length+" entries";
- $("catalogList").innerHTML=entries.map(x=>'<div class="catalog-entry"><div class="catalog-name"><strong>'+escapeHTML(x.name)+'</strong><small>'+escapeHTML(unitCategory(x))+'</small></div><span class="catalog-price">'+unitBasePrice(x)+' pts</span><button class="tiny primary" data-action="add" data-unit="'+escapeHTML(x.sourceId)+'" title="Add unit">+</button></div>').join("")||'<div class="empty">No matching units.</div>';
+ $("catalogList").innerHTML=order.filter(group=>groups.has(group)).concat([...groups.keys()].filter(k=>!order.includes(k))).map(group=>{
+   const entries=groups.get(group);
+   const open=q.length>0 || state.category!=="All" || state.catalogCollapsed[group]!==true;
+   const cards=entries.map(x=>'<div class="catalog-entry"><div class="catalog-name"><strong>'+escapeHTML(x.name)+'</strong><small>'+escapeHTML(unitCategory(x))+'</small></div><span class="catalog-price">'+unitBasePrice(x)+' pts</span><button class="tiny primary" data-action="add" data-unit="'+escapeHTML(x.sourceId)+'" title="Add unit">+</button></div>').join("");
+   return '<details class="catalog-group" data-catalog-group="'+escapeHTML(group)+'"'+(open?" open":"")+'><summary><span>'+escapeHTML(group)+'</span><span class="group-counter">'+entries.length+'</span></summary><div class="catalog-entries">'+cards+'</div></details>';
+ }).join("")||'<div class="empty">No matching units.</div>';
 }
 function renderRoster(){
  if(!catalog)return;
@@ -119,35 +132,57 @@ function renderRoster(){
  $("messages").innerHTML=lastResult.errors.map(x=>'<li class="error">'+escapeHTML(x)+'</li>').concat(lastResult.warnings.map(x=>'<li>'+escapeHTML(x)+'</li>')).join("");
  $("undo").disabled=history.length===0;
 }
-function optionRow(node,path,item,unit){
- const value=E.getCount(item,path),max=E.amount(node,"max");
- const min=E.amount(node,"min");
+function optionRow(node,path,item,unit,isEnhancement=false){
+ const value=E.getCount(item,path),ctx=ctxFor(unit,item),max=E.amount(node,"max",ctx);
+ const min=E.amount(node,"min",ctx);
  const fixed=min!==null&&max!==null&&min===max;
  const price=E.pts(node);
+ const info=isEnhancement?'<button type="button" class="info-mark" data-action="info" data-path="'+escapeHTML(path)+'" title="Show enhancement effect" aria-label="Show effect of '+escapeHTML(node.name)+'">?</button>':"";
+ if(node.name==="Warlord"){
+   const control='<label class="checkline"><input type="checkbox" data-field="warlord" data-path="'+escapeHTML(path)+'" '+(value?"checked":"")+'><span>Designate</span></label>';
+   return '<div class="option-row"><div class="option-label">Warlord</div>'+control+'</div>';
+ }
  const control=fixed ? '<span class="option-static">Fixed ×'+value+'</span>':
   '<div class="option-controls"><button class="tiny" data-action="down" data-path="'+escapeHTML(path)+'" '+(!value?"disabled":"")+'>−</button>'+
   '<input aria-label="Quantity '+escapeHTML(node.name)+'" type="number" data-path="'+escapeHTML(path)+'" data-field="qty" min="0" max="'+(max===null?99:max)+'" value="'+value+'">'+
   '<button class="tiny" data-action="up" data-path="'+escapeHTML(path)+'" '+(max!==null&&value>=max?"disabled":"")+'>+</button></div>';
- return '<div class="option-row"><div class="option-label">'+escapeHTML(node.name)+(price>0?'<small>+'+price+' pts each</small>':"")+'</div>'+control+'</div>';
+ return '<div class="option-row"><div class="option-label">'+escapeHTML(node.name)+info+(price>0?'<small>+'+price+' pts each</small>':"")+'</div>'+control+'</div>';
 }
-function renderOptionTree(node,path,item,unit,depth=0){
+function showOptionInfo(node) {
+ const parts=[];
+ for(const p of node.profiles||[]) {
+   const lines=E.profileRows(p).map(row=>'<div class="info-description">'+(row.name==="Description"?"":'<strong>'+escapeHTML(row.name)+': </strong>')+escapeHTML(row.value)+'</div>').join("");
+   parts.push('<div class="info-effect"><h4>'+escapeHTML(p.name||node.name)+'</h4>'+lines+'</div>');
+ }
+ for(const link of node.infoLinks||[]) {
+   const linked=catalog?.rules.get(link.targetId);
+   if(linked)parts.push('<div class="info-effect"><h4>'+escapeHTML(link.name||linked.name)+'</h4><div class="info-description">'+escapeHTML(linked.description||E.profileRows(linked).map(r=>r.value).join("\n"))+'</div></div>');
+ }
+ for(const rule of node.rules||[])parts.push('<div class="info-effect"><h4>'+escapeHTML(rule.name)+'</h4><div class="info-description">'+escapeHTML(rule.description||"")+'</div></div>');
+ $("infoTitle").textContent=node.name;
+ $("infoContent").innerHTML=parts.join("")||'<p class="muted">No effect description is available in this BSData entry.</p>';
+ const dialog=$("infoDialog");
+ if(typeof dialog.showModal==="function")dialog.showModal();else dialog.setAttribute("open","");
+}
+function renderOptionTree(node,path,item,unit,depth=0,insideEnhancements=false){
+ const enhancements=insideEnhancements||node.name==="Enhancements";
  if(depth>12)return "";
  if(["Crusade","Order of Battle","Weapon Modifications"].includes(node.name))return "";
  const ctx=ctxFor(unit,item);
  if(E.isHidden(node,ctx)&&E.getCount(item,path)===0 && !node.group)return "";
  if(node.group){
-   const children=node.children.map(child=>renderOptionTree(child,E.keyFor(path,child),item,unit,depth+1)).join("");
+   const children=node.children.map(child=>renderOptionTree(child,E.keyFor(path,child),item,unit,depth+1,enhancements)).join("");
    if(!children)return "";
    if(E.isHidden(node,ctx))return "";
-   const mn=E.amount(node,"min"),mx=E.amount(node,"max"),sum=E.groupSum(node,path,item);
+   const mn=E.amount(node,"min",ctx),mx=E.amount(node,"max",ctx),sum=E.groupSum(node,path,item);
    const range=(mn===null&&mx===null)?"":'<span class="group-limits">'+sum+' / '+(mn??0)+'-'+limitText(mx)+'</span>';
    const id=item.key+":"+path;
    const expanded=(state.expanded[id]===true || (state.expanded[id]===undefined && depth<2))?" open":"";
    return '<details class="option-group" data-group-key="'+escapeHTML(id)+'"'+expanded+'><summary>'+escapeHTML(node.name)+range+'</summary><div class="option-level">'+children+'</div></details>';
  }
  const value=E.getCount(item,path);
- const leaf=optionRow(node,path,item,unit);
- const inner=node.children.length&&value?node.children.map(child=>renderOptionTree(child,E.keyFor(path,child),item,unit,depth+1)).join(""):"";
+ const leaf=optionRow(node,path,item,unit,enhancements);
+ const inner=node.children.length&&value?node.children.map(child=>renderOptionTree(child,E.keyFor(path,child),item,unit,depth+1,enhancements)).join(""):"";
  if(!inner)return leaf;
  return '<div>'+leaf+'<div class="option-level">'+inner+'</div></div>';
 }
@@ -253,11 +288,15 @@ function download(body,mime,filename){
 document.addEventListener("toggle",event=>{
  const details=event.target;
  if(details.tagName==="DETAILS" && details.dataset.groupKey)state.expanded[details.dataset.groupKey]=details.open;
+ if(details.tagName==="DETAILS" && details.dataset.catalogGroup && !state.search.trim() && state.category==="All")state.catalogCollapsed[details.dataset.catalogGroup]=!details.open;
 },true);
 document.addEventListener("click",event=>{
  const el=event.target.closest("[data-action]");if(!el||!catalog||state.loading)return;
  const action=el.dataset.action,key=el.dataset.key;
- if(action==="add"){
+ if(action==="info"){
+   const item=currentItem(),unit=item&&catalog.units.get(item.unitId),node=E.findNode(unit,el.dataset.path);
+   if(node)showOptionInfo(node);
+ }else if(action==="add"){
    const unit=catalog.units.get(el.dataset.unit);if(!unit)return;
    mutate(()=>{const item=E.makeItem(unit);state.items.push(item);state.selected=item.key;state.tab="configure"});
  }else if(action==="select"){state.selected=key;state.tab="configure";render()}
@@ -273,9 +312,20 @@ document.addEventListener("change",event=>{
  const el=event.target;
  if(el.dataset.field==="qty"){
    mutate(()=>{const it=currentItem();if(it)E.setCount(catalog,it,el.dataset.path,el.value)});
+ }else if(el.dataset.field==="warlord"){
+   const enabled=el.checked;
+   mutate(()=>{
+     const selected=currentItem();if(!selected)return;
+     if(enabled)for(const item of state.items){
+       const u=catalog.units.get(item.unitId),w=u?.children.find(x=>x.name==="Warlord");
+       if(w)E.setCount(catalog,item,E.keyFor(u.id,w),0);
+     }
+     E.setCount(catalog,selected,el.dataset.path,enabled?1:0);
+   });
  }
 });
 $("search").addEventListener("input",e=>{state.search=e.target.value;renderCatalog()});
+$("closeInfo").addEventListener("click",()=>$("infoDialog").close());
 $("category").addEventListener("change",e=>{state.category=e.target.value;renderCatalog()});
 $("legends").addEventListener("change",e=>{state.legends=e.target.checked;renderCatalog()});
 $("faction").addEventListener("change",e=>{saved[state.faction]={items:state.items,detachment:state.detachment,limit:state.limit};loadFaction(e.target.value)});
