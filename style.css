@@ -52,3 +52,9 @@ button,input,select{letter-spacing:.016em}
 .info-effect:last-child{border-bottom:0}
 .info-description{white-space:pre-line;overflow-wrap:anywhere}
 @media(max-width:850px){.info-dialog{max-height:85vh}}
+
+.association-block{background:#0b2115;border:1px solid #2c6241;margin:14px 0;padding:12px}
+.association-block h4{color:#9bffc0;font:16px Georgia,serif;letter-spacing:.03em;margin:0 0 9px}
+.association-row{display:flex;flex-direction:column;gap:5px;margin:8px 0 14px}
+.association-row label{color:#abdbb8;font-size:13px}
+.association-row select{width:100%;font-size:14px}
