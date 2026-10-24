@@ -58,4 +58,43 @@ assert.ok(check.warnings.some(x=>/detachment/i.test(x)));
 assert.equal(check.errors.filter(x=>/5-10 models/.test(x)).length,0);
 E.setCount(c,i,modelPath,1);
 assert.ok(E.validate(c,[i],2000,null).errors.some(x=>/requires at least 5/.test(x)),"invalid squad sizes flagged");
+
+/* Associations, game-system limits and conditional profile modifications. */
+const advanced=JSON.parse(JSON.stringify(fixture));
+const source=advanced.catalogue.sharedSelectionEntries[0];
+source.associations=[{name:"Leading",label:"Leader",id:"lead",action:"group",min:0,max:1,
+ conditionGroups:[{type:"or",conditions:[{field:"selections",childId:"root",type:"instanceOf",value:1}]}]}];
+source.profiles=[{id:"stat",name:"Test Warriors",typeName:"Unit",characteristics:[{name:"M",typeId:"speed", $text:'5"'}]}];
+source.modifiers.push({field:"speed",affects:"profiles.Unit",type:"increment",value:2,
+ conditions:[{field:"associations",childId:"any",scope:"self",type:"atLeast",value:1}]});
+const system={gameSystem:{name:"Warhammer 40,000 test system",
+ costTypes:[{name:"Enhancements",id:"enh-cost"}],
+ forceEntries:[{name:"Army Roster",constraints:[{field:"enh-cost",type:"max",value:2}]}]}};
+const advancedCatalog=E.makeCatalog(advanced,[],system),au=advancedCatalog.roots[0];
+const leader=E.makeItem(au),bodyguard=E.makeItem(au);
+assert.equal(advancedCatalog.enhancementLimit,2,"enhancement cap from game system");
+const attach=E.associationEntries(advancedCatalog,[leader,bodyguard],leader);
+assert.equal(attach[0].candidates.length,1,"valid target for association");
+const baseSpeed=E.profileRows(E.resolveProfiles(advancedCatalog,leader,[leader,bodyguard],null)[0]).find(r=>r.name==="M");
+assert.equal(baseSpeed.value,'5"');
+leader.associations={lead:bodyguard.key};
+const speed=E.profileRows(E.resolveProfiles(advancedCatalog,leader,[leader,bodyguard],null)[0]).find(r=>r.name==="M");
+assert.equal(speed.value,'7"',"associated unit condition modifies unit profile");
+const selector=au.children.find(x=>x.name==="5-10 models").children[0].children.find(x=>x.name==="Weapon");
+assert.equal(E.getCount(leader,au.id+"/models/trooper/weapons/gauss"),1);
+assert.equal(E.amount(selector,"max"),1);
+const bounds=JSON.parse(JSON.stringify(fixture));
+const weapon=bounds.catalogue.sharedSelectionEntries[0].selectionEntryGroups[0].selectionEntries[0].selectionEntryGroups[0].selectionEntries[0];
+weapon.constraints[0].id="gauss-max";
+weapon.modifiers=[{field:"gauss-max",type:"decrement",value:1,conditions:[
+ {field:"selections",childId:"model",scope:"warrior",type:"lessThan",value:6}]}];
+const bc=E.makeCatalog(bounds),bu=bc.roots[0],bi=E.makeItem(bu);
+const gaussNode=bu.children[0].children[0].children[0].children[0];
+assert.equal(E.amount(gaussNode,"max",{catalog:bc,unit:bu,item:bi,roster:[bi]}),0,
+ "conditional max on 5-model unit");
+E.setCount(bc,bi,bu.id+"/models/trooper",6);
+assert.equal(E.amount(gaussNode,"max",{catalog:bc,unit:bu,item:bi,roster:[bi]}),1,
+ "conditional max changes after increasing models");
+
+console.log("Extended rules, association, and profile tests passed.");
 console.log("BSData engine regression tests passed.");
